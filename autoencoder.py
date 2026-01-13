@@ -416,22 +416,53 @@ class AutoencoderKL(nn.Module):
             self.init_from_ckpt(ckpt_path)
 
     def init_from_ckpt(self, path):
+        '''종민 수정'''
+        # PyTorch 2.6+: torch.load 기본이 weights_only=True라서
+        # Lightning 체크포인트(객체 포함) 로드가 막힐 수 있음 → 명시적으로 False
         try:
-            sd = torch.load(path, map_location="cpu")["state_dict"]
-            keys = list(sd.keys())
-            import collections
+            ckpt = torch.load(path, map_location="cpu", weights_only=False)
 
-            sd_new = collections.OrderedDict()
+            # Lightning checkpoint: {"state_dict": ...}
+            if isinstance(ckpt, dict) and "state_dict" in ckpt:
+                sd = ckpt["state_dict"]
 
-            for k in keys:
-                if k.find("first_stage_model") >= 0:
-                    k_new = k.split("first_stage_model.")[-1]
-                    sd_new[k_new] = sd[k]
+                keys = list(sd.keys())
+                import collections
+                sd_new = collections.OrderedDict()
 
-            self.load_state_dict(sd_new, strict=True)
-        except:
-            sd = torch.load(path, map_location="cpu")
-            self.load_state_dict(sd, strict=True)
+                for k in keys:
+                    if "first_stage_model" in k:
+                        k_new = k.split("first_stage_model.")[-1]
+                        sd_new[k_new] = sd[k]
+
+                self.load_state_dict(sd_new, strict=True)
+
+            else:
+                # plain state_dict
+                self.load_state_dict(ckpt, strict=True)
+
+        except Exception as e:
+            # 에러 메시지 확인용 (선택)
+            print(f"[init_from_ckpt] failed to load checkpoint: {e}")
+            raise
+
+    # def init_from_ckpt(self, path):
+    #     try:
+    #         sd = torch.load(path, map_location="cpu")["state_dict"]
+    #         keys = list(sd.keys())
+    #         import collections
+    #
+    #         sd_new = collections.OrderedDict()
+    #
+    #         for k in keys:
+    #             if k.find("first_stage_model") >= 0:
+    #                 k_new = k.split("first_stage_model.")[-1]
+    #                 sd_new[k_new] = sd[k]
+    #
+    #         self.load_state_dict(sd_new, strict=True)
+    #     except:
+    #         sd = torch.load(path, map_location="cpu")
+    #         self.load_state_dict(sd, strict=True)
 
     def on_train_batch_end(self, *args, **kwargs):
         if self.use_ema:
