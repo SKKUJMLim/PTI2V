@@ -233,3 +233,55 @@ class AverageMeter(object):
         self.sum += val * n
         self.count += n
         self.avg = self.sum / self.count
+
+
+
+def save_world_state_logs(
+    save_dir: str,
+    states: list,
+    drift_l2: list,
+    drift_cos: list,
+):
+    """
+    save_dir: 저장할 디렉토리 (예: save_img_dir)
+    states: list of (B,D) torch tensors (CPU)
+    drift_l2: list of float
+    drift_cos: list of float
+    """
+    import json
+    import numpy as np
+    import os
+    import torch
+
+    os.makedirs(save_dir, exist_ok=True)
+
+    # raw tensor 로그
+    state_path = os.path.join(save_dir, "world_state.pt")
+    torch.save(
+        {
+            "states": states,
+            "drift_l2": drift_l2,
+            "drift_cos": drift_cos,
+        },
+        state_path,
+    )
+
+    # summary json (사람이 보기 좋게)
+    summary_path = os.path.join(save_dir, "world_state_summary.json")
+    with open(summary_path, "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "num_states": len(states),
+                "state_dim": int(states[0].shape[-1]) if len(states) else None,
+                "drift_l2_mean": float(np.mean(drift_l2)) if len(drift_l2) else None,
+                "drift_cos_mean": float(np.mean(drift_cos)) if len(drift_cos) else None,
+                "drift_l2": drift_l2,
+                "drift_cos": drift_cos,
+            },
+            f,
+            ensure_ascii=False,
+            indent=2,
+        )
+
+    print(f"[world-state] logs saved to {save_dir}")
+
