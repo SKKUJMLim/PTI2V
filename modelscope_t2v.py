@@ -181,8 +181,10 @@ class TextToVideoSynthesis(Model):
                 if self.config.model.model_args.tiny_gpu == 1:
                     self.autoencoder.to("cpu")
                 video_data = rearrange(video_data, "(b f) c h w -> b c f h w", b=bs_vd)
+
         return video_data.type(torch.float32).cpu()
 
+    # TI2V-Zero의 새로운 구현. Modelscope는 forward함수로 수행한다
     @torch.no_grad()
     def forward_with_vid_resample(
         self, input, vid, add_vid_cond, use_ddpm_inversion, resample_iter, ddim_step=50, guide_scale=9.0
@@ -193,10 +195,13 @@ class TextToVideoSynthesis(Model):
         self.autoencoder.to(self.device)
         scale_factor = 0.18215
         vid_embedding = None
+
         if vid is not None:
             vid = vid.to(self.device)
+
             # encode video to embedding
             vid_embedding = []
+
             for frame_idx in range(vid.size(2)):
                 img = vid[:, :, frame_idx]
                 img_embedding = self.autoencoder.encode(img).mean
@@ -212,6 +217,7 @@ class TextToVideoSynthesis(Model):
                     rec_img.clamp_(0, 1)
                     rec_img_data = np.array(rec_img[0].permute(1, 2, 0).data.cpu().numpy() * 255.0, dtype=np.uint8)
                 vid_embedding.append(img_embedding)
+
             vid_embedding = torch.stack(vid_embedding, dim=2)
 
         # synthesis
@@ -238,6 +244,7 @@ class TextToVideoSynthesis(Model):
                 )
 
                 video_data = 1.0 / scale_factor * x0
+
         return video_data.type(torch.float32).cpu()
 
 

@@ -20,8 +20,14 @@ def load_vjepa2_encoder(
     """
 
     loaded = torch.hub.load(repo, model_name)
-    encoder = loaded[0] if isinstance(loaded, tuple) else loaded
+
+    if isinstance(loaded, tuple):
+        encoder = loaded[0]  # encoder만 사용
+    else:
+        encoder = loaded
+
     encoder = encoder.to(device).eval()
+
     return encoder
 
     # # ---------------- V-JEPA2 (HF) load ----------------
@@ -113,6 +119,7 @@ def extract_world_state_window(
 
     if return_cpu:
         w = w.detach().cpu()
+
     return w
 
 

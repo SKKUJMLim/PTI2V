@@ -33,11 +33,18 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
 # Text input examples
 # input = "A mesmerizing display of the northern lights in the Arctic."
-input = "A panda is dancing in the Times Square."
+# input = "A panda is dancing in the Times Square."
+# input = "A basketball free falls in the air"
+# input = "A 30lb kettlebell and a green piece of paper are lowered onto two pillows."
+# input = "A lit match is being lowered into a glass of water."
+# input = "A basketball falls from the air to the floor."
 
 # Image input examples
 # img_path = "examples/northern_lights_sd.jpg"
-img_path = "./examples/panda_dancing_sd.png"
+# img_path = "./examples/panda_dancing_sd.png"
+# img_path= "./examples/ball.png"
+# img_path= "./examples/orange.jpg"
+img_path= "./examples/cup.jpg"
 
 # After running initialization.py, set the config path to your ModelScope path
 config = {"model": "./weights", "device": "gpu"}
@@ -85,17 +92,18 @@ t2v_pipeline = TextToVideoSynthesisPipeline(**config)
 processed_input = t2v_pipeline.preprocess([input])
 
 
-vjepa2_encoder = load_vjepa2_encoder(device=t2v_pipeline.model.device)
+# vjepa2_encoder = load_vjepa2_encoder(device=t2v_pipeline.model.device)
 
 for sample_idx in range(NUM_SAMPLES):
 
     newpostfix = postfix + "-%02d" % sample_idx
     vid_tensor = t2v_pipeline.preprocess_vid(deepcopy(cond_vid_npy))
-
     new_output_tensor = vid_tensor.clone().detach().cpu() # 최종 비디오
 
     output_filename = input.replace(" ", "_")[:-1] + "%s-%02d.gif" % (newpostfix, NUM_NEW_FRAMES)
+    # output_filename = input.replace(" ", "_")[:-1] + "%s-%02d.mp4" % (newpostfix, NUM_NEW_FRAMES)
     video_name = os.path.basename(output_filename)[:-4]
+
     save_img_dir = os.path.join(output_img_dir, video_name)
     os.makedirs(save_img_dir, exist_ok=True)
     img_name = video_name + "%03d.jpg" % 0
@@ -128,16 +136,16 @@ for sample_idx in range(NUM_SAMPLES):
         with torch.no_grad():
             new_frame = t2v_pipeline.model.autoencoder.decode(output[:, :, -1].cuda())
 
-        frame_buf.append(new_frame)
-        if len(frame_buf) >= 2:
-            w = extract_world_state_window(list(frame_buf), vjepa2_encoder)  # encoder 인자 주의
-            states.append(w)
-
-            if len(states) >= 2:
-                l2, cos_drift = compute_drift(states[-2], states[-1])
-                drift_l2.append(l2)
-                drift_cos.append(cos_drift)
-                print(f"[state@K={K}] frame={i + 1:02d}  l2={l2:.6f}  cos_drift={cos_drift:.6f}")
+        # frame_buf.append(new_frame)
+        # if len(frame_buf) >= 2:
+        #     w = extract_world_state_window(list(frame_buf), vjepa2_encoder)
+        #     states.append(w)
+        #
+        #     if len(states) >= 2:
+        #         l2, cos_drift = compute_drift(states[-2], states[-1])
+        #         drift_l2.append(l2)
+        #         drift_cos.append(cos_drift)
+        #         print(f"[state@K={K}] frame={i + 1:02d}  l2={l2:.6f}  cos_drift={cos_drift:.6f}")
 
 
         new_frame = new_frame.data.cpu().unsqueeze(dim=2)
@@ -146,7 +154,9 @@ for sample_idx in range(NUM_SAMPLES):
         img_path = os.path.join(save_img_dir, img_name)
         imageio.v2.imsave(img_path, img_npy)
         new_output_tensor = torch.cat((new_output_tensor, new_frame), dim=2)
-        vid_tensor = new_output_tensor[:, :, (i + 1) :]
+
+        vid_tensor = new_output_tensor[:, :, (i + 1) :] #
+
         assert vid_tensor.size(2) == NUM_COND_FRAMES
 
     SAVE_WORLD_STATE = True

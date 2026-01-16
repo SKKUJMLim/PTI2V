@@ -205,6 +205,9 @@ class GaussianDiffusion(object):
                 xt, t, model, model_kwargs, clamp, percentile, condition_fn, guide_scale, ddim_timesteps, eta
             )
         return xt
+    ## 본래 modelscope의 diffusion.py는 여기까지 구현되어 있다
+
+    ## 아래 추가 부분은 TI2V-zero 논문의 추가 구현이다
 
     # add resampling
     @torch.no_grad()
@@ -237,8 +240,15 @@ class GaussianDiffusion(object):
             .flip(0)
         )
 
-        if use_ddpm_inversion:
+        if use_ddpm_inversion: ## DDPM forward process
+
             if cond_vid is not None:
+                '''
+                cond_vid[:, :, -1]  : 이전 프레임의 clean latent
+                last_ts = steps[0]  : 가장 큰 diffusion timestep = T
+                self.q_sample(z0, T): DDPM forward process
+                unsqueeze(dim=2) + cat(... for _ in range(num_frames)): forward-noised latent를 생성할 모든 프레임 슬롯에 초기값으로 복사
+                '''
                 # DDPM inversion
                 last_ts = torch.full((b,), steps[0], dtype=torch.long, device=noise.device)
                 xt = torch.cat(
@@ -255,18 +265,23 @@ class GaussianDiffusion(object):
 
             # nhm: add video condition here
             if add_vid_cond:
-                if cond_vid is not None:
-                    noisy_cond_vid = self.q_sample(cond_vid, t)
-                    next_noisy_cond_vid = self.q_sample(cond_vid, next_t)
+                if cond_vid is not None: # cond_vid: 이전에 생성된 프레임들 or 주어진 초기 프레임들 (clean latent)
+                    # cond_vid: [B, C, num_cond_frame, H, W]
+                    # DDPM forward diffusion 수행
+                    noisy_cond_vid = self.q_sample(cond_vid, t)             # 현재 denoising step에 맞춘 조건 프레임 (st를 만드는 것(Algorithm 1 line 9~11)
+                    next_noisy_cond_vid = self.q_sample(cond_vid, next_t)   # 다음 denoising step에 맞춘 조건 프레임 (다음 step에 들어갈 st를 미리 만들어두는 것)
                     xt[:, :, :num_cond_frame] = noisy_cond_vid
 
+            ### resampling 구현 Start ###
+            # 한 번 denoise 했는데 다시 noise를 한 step 넣어서 되돌림
             for u_iter in range(resample_iter):
                 xt, _ = self.ddim_sample(
                     xt, t, model, model_kwargs, clamp, percentile, condition_fn, guide_scale, ddim_timesteps, eta
-                )
+                )                                                           # 현재 step t에서 xt를 next_t 쪽으로 한 번 이동시키는 동작(denoise update)
                 xt[:, :, :num_cond_frame] = next_noisy_cond_vid
                 alpha_t = _i(self.alphas_cumprod, t, xt)
                 alpha_t_next = _i(self.alphas_cumprod, next_t, xt)
+
                 alpha_interval = alpha_t / alpha_t_next
                 sqrt_alphas_cumprod = torch.sqrt(alpha_interval)
                 sqrt_one_minus_alphas_cumprod = torch.sqrt(1.0 - alpha_interval)
@@ -274,6 +289,7 @@ class GaussianDiffusion(object):
                 xt = (
                     sqrt_alphas_cumprod.to(xt.device) * xt + sqrt_one_minus_alphas_cumprod.to(xt.device) * cur_noise
                 ).type(torch.float32)
+                ### resampling 구현 End ###
 
             xt, _ = self.ddim_sample(
                 xt, t, model, model_kwargs, clamp, percentile, condition_fn, guide_scale, ddim_timesteps, eta
