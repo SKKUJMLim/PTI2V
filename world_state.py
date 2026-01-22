@@ -107,7 +107,10 @@ def extract_world_state_window(
 
     x = x.to(next(encoder.parameters()).device)
 
+    print("video shape == ", x.shape)
+
     out = encoder(x)
+    print("vjepa out shape ==== ", out.shape)
     if isinstance(out, (tuple, list)):
         out = out[0]
 

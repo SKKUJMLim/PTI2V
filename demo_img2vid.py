@@ -36,7 +36,7 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 # input = "A panda is dancing in the Times Square."
 # input = "A basketball free falls in the air"
 # input = "A 30lb kettlebell and a green piece of paper are lowered onto two pillows."
-# input = "A lit match is being lowered into a glass of water."
+input = "A lit match is being lowered into a glass of water."
 # input = "A basketball falls from the air to the floor."
 
 # Image input examples
@@ -92,7 +92,7 @@ t2v_pipeline = TextToVideoSynthesisPipeline(**config)
 processed_input = t2v_pipeline.preprocess([input])
 
 
-# vjepa2_encoder = load_vjepa2_encoder(device=t2v_pipeline.model.device)
+vjepa2_encoder = load_vjepa2_encoder(device=t2v_pipeline.model.device)
 
 for sample_idx in range(NUM_SAMPLES):
 
@@ -136,16 +136,16 @@ for sample_idx in range(NUM_SAMPLES):
         with torch.no_grad():
             new_frame = t2v_pipeline.model.autoencoder.decode(output[:, :, -1].cuda())
 
-        # frame_buf.append(new_frame)
-        # if len(frame_buf) >= 2:
-        #     w = extract_world_state_window(list(frame_buf), vjepa2_encoder)
-        #     states.append(w)
-        #
-        #     if len(states) >= 2:
-        #         l2, cos_drift = compute_drift(states[-2], states[-1])
-        #         drift_l2.append(l2)
-        #         drift_cos.append(cos_drift)
-        #         print(f"[state@K={K}] frame={i + 1:02d}  l2={l2:.6f}  cos_drift={cos_drift:.6f}")
+        frame_buf.append(new_frame)
+        if len(frame_buf) >= 2:
+            w = extract_world_state_window(list(frame_buf), vjepa2_encoder)
+            states.append(w)
+
+            if len(states) >= 2:
+                l2, cos_drift = compute_drift(states[-2], states[-1])
+                drift_l2.append(l2)
+                drift_cos.append(cos_drift)
+                print(f"[state@K={K}] frame={i + 1:02d}  l2={l2:.6f}  cos_drift={cos_drift:.6f}")
 
 
         new_frame = new_frame.data.cpu().unsqueeze(dim=2)
