@@ -241,6 +241,7 @@ class TextToVideoSynthesis(Model):
                     add_vid_cond=add_vid_cond,
                     use_ddpm_inversion=use_ddpm_inversion,
                     resample_iter=resample_iter,
+                    # condition_fn=condition_fn,
                 )
 
                 video_data = 1.0 / scale_factor * x0

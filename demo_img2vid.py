@@ -20,8 +20,7 @@ from modelscope_t2v_pipeline import TextToVideoSynthesisPipeline, tensor2vid
 from util import center_crop, save_world_state_logs
 
 from collections import deque
-
-from world_state import load_vjepa2_encoder, extract_world_state_window, compute_drift
+from energy.jepa_score import load_vjepa2_encoder
 
 
 print(torch.cuda.is_available())
@@ -110,14 +109,6 @@ for sample_idx in range(NUM_SAMPLES):
     img_path = os.path.join(save_img_dir, img_name)
     imageio.v2.imsave(img_path, first_img_npy)
 
-    K = NUM_FRAMES # Slidning Window
-    frame_buf = deque(maxlen=K)
-    first_frame = torch.from_numpy(first_img_npy.copy()).float().permute(2, 0, 1).unsqueeze(0).to(t2v_pipeline.model.device)
-    frame_buf.append(first_frame)
-
-    states = []  # (B,D) CPU 텐서들
-    drift_l2 = []
-    drift_cos = []
 
     # image-to-video generation
     for i in range(NUM_NEW_FRAMES):
@@ -136,17 +127,6 @@ for sample_idx in range(NUM_SAMPLES):
         with torch.no_grad():
             new_frame = t2v_pipeline.model.autoencoder.decode(output[:, :, -1].cuda())
 
-        frame_buf.append(new_frame)
-        if len(frame_buf) >= 2:
-            w = extract_world_state_window(list(frame_buf), vjepa2_encoder)
-            states.append(w)
-
-            if len(states) >= 2:
-                l2, cos_drift = compute_drift(states[-2], states[-1])
-                drift_l2.append(l2)
-                drift_cos.append(cos_drift)
-                print(f"[state@K={K}] frame={i + 1:02d}  l2={l2:.6f}  cos_drift={cos_drift:.6f}")
-
 
         new_frame = new_frame.data.cpu().unsqueeze(dim=2)
         img_npy = tensor2vid(new_frame.clone().detach())[0]
@@ -158,10 +138,6 @@ for sample_idx in range(NUM_SAMPLES):
         vid_tensor = new_output_tensor[:, :, (i + 1) :] #
 
         assert vid_tensor.size(2) == NUM_COND_FRAMES
-
-    SAVE_WORLD_STATE = True
-    if SAVE_WORLD_STATE:
-        save_world_state_logs(save_img_dir, states, drift_l2, drift_cos)
 
     output_video = t2v_pipeline.postprocess(
         new_output_tensor[:, :, (NUM_COND_FRAMES - 1) :], os.path.join(output_dir, output_filename)
