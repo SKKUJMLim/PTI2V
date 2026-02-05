@@ -156,7 +156,9 @@ class GaussianDiffusion(object):
             # x0 -> eps
             alpha = _i(self.alphas_cumprod, t, xt)
             eps = (_i(self.sqrt_recip_alphas_cumprod, t, xt) * xt - x0) / _i(self.sqrt_recipm1_alphas_cumprod, t, xt)
-            eps = eps - (1 - alpha).sqrt() * condition_fn(xt, self._scale_timesteps(t), **model_kwargs)
+
+            # eps = eps - (1 - alpha).sqrt() * condition_fn(xt, self._scale_timesteps(t), **model_kwargs)
+            eps = eps - (1 - alpha).sqrt() * condition_fn(xt, self._scale_timesteps(t))
 
             # eps -> x0
             x0 = _i(self.sqrt_recip_alphas_cumprod, t, xt) * xt - _i(self.sqrt_recipm1_alphas_cumprod, t, xt) * eps

@@ -17,10 +17,14 @@ import torch
 from PIL import Image
 
 from modelscope_t2v_pipeline import TextToVideoSynthesisPipeline, tensor2vid
-from util import center_crop, save_world_state_logs
+from util import center_crop
 
 from collections import deque
 from energy.jepa_score import load_vjepa2_encoder
+
+import torch
+from energy.jepa_score import jepa_energy_fd, fd_hutchinson_trace_jtj
+
 
 
 print(torch.cuda.is_available())
@@ -90,8 +94,108 @@ cond_vid_npy = np.stack(first_img_npy_list, axis=0)
 t2v_pipeline = TextToVideoSynthesisPipeline(**config)
 processed_input = t2v_pipeline.preprocess([input])
 
+##########################################################################################################################################
+def make_fd_energy_condition_fn(
+    t2v_pipeline,
+    vjepa2_encoder,
+    method: str = "fd",          # "fd" or "hutch"
+    n_dir: int = 2,              # jepa_energy_fd의 n_dir
+    n_samples: int = 4,          # fd_hutchinson_trace_jtj의 n_samples
+    eps_fd: float = 1e-3,        # encoder-input perturb (jepa_score.py 기본값과 맞추는 쪽 권장)
+    eps_xt: float = 1e-3,        # latent xt perturb (SPSA step)
+    n_probe_xt: int = 2,         # SPSA probe 개수(xt 방향)
+    guide_w: float = 0.05,       # condition_fn 출력 스케일
+    pool: str = "mean",
+    noise: str = "rademacher",
+):
+    """
+    condition_fn(xt,t,**kwargs) -> (B,4,T,32,32) pseudo-grad
+    - Uses FD/Hutch energy estimator (no_grad) and SPSA to approximate ∇_xt E(xt)
+    """
+    device = t2v_pipeline.model.device
+    ae = t2v_pipeline.model.autoencoder
+    scale_factor = 0.18215  # modelscope_t2v.py에서 사용하는 값 :contentReference[oaicite:6]{index=6}
+
+    def energy_from_xt(xt: torch.Tensor) -> torch.Tensor:
+        device = t2v_pipeline.model.device
+        ae = t2v_pipeline.model.autoencoder
+        scale_factor = 0.18215
+
+        xt = xt.to(device)
+        B, _, T, _, _ = xt.shape
+
+        # (B,4,T,32,32) -> (B*T,4,32,32)
+        z = xt.permute(0, 2, 1, 3, 4).contiguous().view(B * T, 4, 32, 32)
+
+        z_unscaled = (1.0 / scale_factor) * z
+        rgb = ae.decode(z_unscaled)  # (B*T,3,256,256)
+
+        # (B*T,3,256,256) -> (B,3,T,256,256)
+        rgb = rgb.view(B, T, 3, 256, 256).permute(0, 2, 1, 3, 4).contiguous()
+
+        if method == "hutch":
+            e = fd_hutchinson_trace_jtj(
+                vjepa2_encoder, rgb,
+                n_samples=n_samples, noise=noise, pool=pool,
+                normalize_r=False, eps_fd=eps_fd
+            )
+        else:
+            e = jepa_energy_fd(vjepa2_encoder, rgb, n_dir=n_dir, eps=eps_fd)
+
+        return e  # (B,)
+
+    def condition_fn(xt, t):
+        device = xt.device
+        B, C, T, H, W = xt.shape
+
+        with torch.cuda.amp.autocast(enabled=False):  # ### CHANGED: 안정성 위해 fp32로
+            xt32 = xt.detach().float()  # ### CHANGED: fp32
+
+            grad_acc = torch.zeros_like(xt32)
+
+            for _ in range(n_probe_xt):
+                # u를 전체 xt에 주지 말고, "마지막 프레임"에만 준다
+                u = torch.zeros_like(xt32)  # ### CHANGED
+                u[:, :, -1] = torch.randn_like(xt32[:, :, -1])  # ### CHANGED
+
+                # (선택) per-sample normalize도 마지막 프레임 기준으로만
+                u_last = u[:, :, -1]
+                u_last = u_last / (u_last.flatten(1).norm(dim=1, keepdim=True)
+                                   .view(B, 1, 1, 1).clamp_min(1e-6))  # ### CHANGED
+                u[:, :, -1] = u_last  # ### CHANGED
+
+                e_plus = energy_from_xt(xt32 + eps_xt * u).mean()
+                e_minus = energy_from_xt(xt32 - eps_xt * u).mean()
+
+                coef = (e_plus - e_minus) / (2.0 * eps_xt)
+
+                grad_acc = grad_acc + coef * u  # 이제 u가 last frame only라 grad도 last frame only
+
+            grad = grad_acc / float(n_probe_xt)
+
+        # dtype/device 맞춰서 반환
+        return (guide_w * grad).to(dtype=xt.dtype, device=device)  # ### CHANGED
+
+    return condition_fn
+
 
 vjepa2_encoder = load_vjepa2_encoder(device=t2v_pipeline.model.device)
+condition_fn = make_fd_energy_condition_fn(
+    t2v_pipeline=t2v_pipeline,
+    vjepa2_encoder=vjepa2_encoder,
+    method="fd",        # 또는 "hutch"
+    n_dir=2,            # fd energy
+    n_samples=4,        # hutch
+    eps_fd=1e-3,
+    eps_xt=1e-3,
+    n_probe_xt=2,
+    guide_w=0.05,
+    pool="mean",
+    noise="rademacher",
+)
+##########################################################################################################################################
+
+
 
 for sample_idx in range(NUM_SAMPLES):
 
@@ -122,6 +226,7 @@ for sample_idx in range(NUM_SAMPLES):
             resample_iter=resample_iter,
             ddim_step=ddim_step,
             guide_scale=9.0,
+            condition_fn=condition_fn,
         )
 
         with torch.no_grad():

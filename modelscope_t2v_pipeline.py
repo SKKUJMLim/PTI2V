@@ -76,10 +76,10 @@ class TextToVideoSynthesisPipeline(Pipeline):
         return video
 
     def forward_with_vid_resample(
-        self, input, vid, add_vid_cond, use_ddpm_inversion, resample_iter, ddim_step=50, guide_scale=9.0
+        self, input, vid, add_vid_cond, use_ddpm_inversion, resample_iter, ddim_step=50, guide_scale=9.0, condition_fn=None
     ):
         video = self.model.forward_with_vid_resample(
-            input, vid, add_vid_cond, use_ddpm_inversion, resample_iter, ddim_step, guide_scale
+            input, vid, add_vid_cond, use_ddpm_inversion, resample_iter, ddim_step, guide_scale, condition_fn=condition_fn
         )
         return video
 

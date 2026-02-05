@@ -187,7 +187,7 @@ class TextToVideoSynthesis(Model):
     # TI2V-Zero의 새로운 구현. Modelscope는 forward함수로 수행한다
     @torch.no_grad()
     def forward_with_vid_resample(
-        self, input, vid, add_vid_cond, use_ddpm_inversion, resample_iter, ddim_step=50, guide_scale=9.0
+        self, input, vid, add_vid_cond, use_ddpm_inversion, resample_iter, ddim_step=50, guide_scale=9.0, condition_fn=None
     ):
         y = input["text_emb"]
         zero_y = input["text_emb_zero"]
@@ -241,7 +241,7 @@ class TextToVideoSynthesis(Model):
                     add_vid_cond=add_vid_cond,
                     use_ddpm_inversion=use_ddpm_inversion,
                     resample_iter=resample_iter,
-                    # condition_fn=condition_fn,
+                    condition_fn=condition_fn,
                 )
 
                 video_data = 1.0 / scale_factor * x0
