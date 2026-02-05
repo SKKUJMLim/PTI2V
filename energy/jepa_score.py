@@ -5,6 +5,8 @@ from torch.autograd.functional import jvp
 from typing import Callable, Literal, Tuple
 
 
+print("[LOADED] energy.jepa_score from:", __file__)
+
 '''
 # Jacobian + SVD (analysis)
 x = x.to(device) # x: (B,C,H,W) or (B,C,T,H,W)
@@ -205,42 +207,89 @@ def jepa_energy_jvp(
     energy = torch.stack(energies, dim=0).mean(dim=0)  # (B,)
     return energy
 
-import torch
+def jepa_energy_fd(encoder_fn, x, n_dir=2, eps=1e-3):
 
-def jepa_energy_fd(
-    encoder_fn,
-    x: torch.Tensor,
-    n_dir: int = 2,
-    eps: float = 1e-3,
-):
-    """
-    Finite-difference JVP-based JEPA energy
-    encoder_fn(x): (B,N,D) or (B,D)
-    x: (B,C,T,H,W)
-    return: (B,)
-    """
+
+    print("[HUTCH] jepa_energy_fd CALLED", flush=True)
+
     B = x.shape[0]
     energies = []
 
-    with torch.no_grad():  # forward only
+    with torch.no_grad():
         f0 = encoder_fn(x)
         if f0.dim() == 3:
-            f0 = f0.mean(dim=1)  # (B,D)
+            f0 = f0.mean(dim=1)
 
         for _ in range(n_dir):
             v = torch.randn_like(x)
-            v = v / (v.norm() + 1e-6)
+            v = v / (
+                v.flatten(1).norm(dim=1, keepdim=True)
+                 .view(B, *([1] * (x.dim() - 1)))
+                 .clamp_min(1e-6)
+            )
 
             f1 = encoder_fn(x + eps * v)
             if f1.dim() == 3:
                 f1 = f1.mean(dim=1)
 
-            Jv = (f1 - f0) / eps      # (B,D)
-            # e = (Jv ** 2).sum(dim=-1)
-            e = (Jv ** 2).mean(dim=-1) # average squared sensitivity per embedding dimension
+            Jv = (f1 - f0) / eps
+            e = (Jv ** 2).mean(dim=-1)
             energies.append(e)
 
     return torch.stack(energies).mean(dim=0)
+
+
+@torch.no_grad()
+def fd_hutchinson_trace_jtj(
+    encoder_fn,
+    x: torch.Tensor,
+    n_samples: int = 4,
+    noise: str = "rademacher",   # <-- 추가
+    pool: str = "mean",
+    normalize_r: bool = False,
+    eps: float = 1e-8,           # <-- 호환용(정규화 안정성)
+    eps_fd: float = 1e-3,        # <-- FD step
+) -> torch.Tensor:
+    """
+    FD-Hutchinson estimator for Tr(J^T J)
+    Jr ≈ (f(x + eps_fd * r) - f(x)) / eps_fd
+    """
+
+    print("[HUTCH] fd_hutchinson_trace_jtj CALLED", flush=True)
+
+    def f(inp):
+        out = encoder_fn(inp)
+        emb = _pool_tokens_if_needed(out, pool)  # (B,D)
+        return emb
+
+    f0 = f(x)  # (B,D)
+    estimates = []
+
+    for _ in range(n_samples):
+        if noise == "rademacher":
+            r = _sample_rademacher_like(x)
+        elif noise == "gaussian":
+            r = torch.randn_like(x)
+        else:
+            raise ValueError(f"Unknown noise: {noise}")
+
+        if normalize_r:
+            r = r / (
+                r.flatten(1).norm(dim=1, keepdim=True)
+                .view(x.shape[0], *([1] * (x.dim() - 1)))
+                .clamp_min(eps)
+            )
+
+        f1 = f(x + eps_fd * r)
+        Jr = (f1 - f0) / eps_fd  # (B,D)
+        # e = (Jr ** 2).sum(dim=-1)  # (B,)
+        e = (Jr ** 2).mean(-1)
+        estimates.append(e)
+
+    return torch.stack(estimates, dim=0).mean(dim=0)
+
+
+
 
 def _sample_rademacher_like(x: torch.Tensor) -> torch.Tensor:
     # +/-1 with equal prob
@@ -273,6 +322,10 @@ def hutchinson_trace_jtj(
     Returns:
       trace_est: (B,) tensor, per-sample estimate of Tr(J^T J)
     """
+
+    print("[HUTCH] hutchinson_trace_jtj CALLED", flush=True)
+
+
     if x.dim() not in (4, 5):
         raise ValueError(f"x must be (B,C,H,W) or (B,C,T,H,W). Got {x.shape}")
 
@@ -282,8 +335,7 @@ def hutchinson_trace_jtj(
     def f(inp: torch.Tensor) -> torch.Tensor:
         out = encoder_fn(inp)                  # (B,N,D) or (B,D)
         emb = _pool_tokens_if_needed(out, pool)  # (B,D)
-
-        print("encoder out shape:", out.shape)
+        print("encoder out:", out.shape, " pooled emb:", emb.shape, " pool:", pool)
 
         return emb
 
